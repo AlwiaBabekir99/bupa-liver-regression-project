@@ -1,0 +1,295 @@
+
+
+# Reading and exploring the dataset:
+```{r}
+
+col_names <- c("mcv", "alkphos", "sgpt", "sgot", "gammagt", "drinks", "selector")
+df <- read.csv("bupa.data", header = FALSE, col.names = col_names)
+head(df)
+str(df)
+summary(df)
+colSums(is.na(df))
+dim(df)
+```
+
+# Use only continuous variables (exclude selector)
+# selector is not a real measurement it only marks train/test groups
+# so it must be removed from correlation and regression analysis
+```{r}
+data <- df[, c("mcv", "alkphos", "sgpt", "sgot", "gammagt", "drinks")]
+```
+
+
+# 2) Correlations matrix between each pair of variables and Pairwise Scatterplots:
+```{r}
+
+
+cor_matrix <- cor(data)
+print(cor_matrix)
+vars <- names(data)
+
+
+for (i in 1:(length(vars)-1)) {
+  for (j in (i+1):length(vars)) {
+    
+    plot(data[[i]], data[[j]],
+         xlab = vars[i],
+         ylab = vars[j],
+         main = paste(vars[i], "vs", vars[j]),
+         pch = 19, 
+         col = "darkblue")
+    
+    # Linear regression line
+    model <- lm(data[[j]] ~ data[[i]])
+    abline(model, col = "red", lwd = 2)
+  }
+}
+
+```
+
+
+# 3) Correlation heatmap:
+```{r}
+library(ggplot2)
+library(reshape2)
+cor_melt <- melt(cor_matrix)
+
+ggplot(cor_melt, aes(x = Var1, y = Var2, fill = value)) +
+  geom_tile(color = "grey70") +  # border color
+  geom_text(aes(label = sprintf("%.2f", value)), 
+            color = "black", size = 3) + 
+  scale_fill_gradient(low = "lightyellow", high = "darkgreen", 
+                      name = "Correlation") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, 
+                                   vjust = 1, 
+                                   hjust = 1, 
+                                   face = "bold"),
+        axis.text.y = element_text(face = "bold"),
+        panel.grid = element_blank()) +
+  coord_fixed() +
+  ggtitle("Correlation Heatmap of Variables") +
+  xlab("") + 
+  ylab("")
+
+```
+
+
+# 4) Correlation between Drinks and the Other Variables:
+```{r}
+
+cor_drinks <- cor(data$drinks, data)
+print(cor_drinks)
+names(cor_drinks) <- colnames(data)
+cor_drinks <- cor_drinks[names(cor_drinks) != "drinks"]
+barplot(cor_drinks,
+        main = "Correlation of Drinks with Other Variables",
+        ylab = "Correlation",
+        col = ifelse(cor_drinks > 0, "skyblue", "tomato"),
+        ylim = c(-1, 1),
+        names.arg = names(cor_drinks),
+        cex.names = 0.8)
+abline(h = 0, lwd = 2)
+
+```
+
+# Based on the correlations, the variables most strongly related to the
+# target variable 'drinks' are Gammagt (0.34), MCV (0.31), and SGOT (0.28).
+# Meaning they are better at explaining variations in alcohol consumption.
+# Alkphos (0.10) has a very weak correlation .
+
+###### 
+ 
+
+## Choice of Statistical Model: Multiple Linear Regression
+
+# Because our target variable drinks is continuous
+# And all predictors are continuous blood-test variables
+#️ Multiple Linear Regression is appropriate.
+
+
+
+### Estimation Methods:
+
+# 1) Frequentist Analysis (LSE):
+```{r}
+model_full <- lm(drinks ~ mcv + alkphos + sgpt + sgot + gammagt, data = df)
+summary(model_full)
+```
+
+## Using AIC for model selection:
+
+# We use the Akaike Information Criterion (AIC) to select the best model.
+# AIC balances model fit and model complexity: lower AIC values indicate
+# a better trade-off between accuracy and the number of predictors.
+# Stepwise selection (backward direction) searches for the model with the minimum AIC.
+
+```{r}
+model_step <- step(model_full, direction = "backward")
+
+summary(model_step)
+```
+
+
+#### So the best model is (drinks ~ mcv + sgot + gammagt) :
+```{r}
+model_final <- lm(drinks ~ mcv + sgot + gammagt, data = df)
+summary(model_final)
+confint(model_final)
+
+```
+# Since the p-values for mcv, sgot, and gammagt are all below the 0.05 significance level, we reject the null hypothesis 
+
+# H0:βi=0 for each predictor. This indicates that all three variables have statistically significant effects on alcohol consumption.
+
+# The 95% confidence intervals for all three predictors (mcv, sgot, and gammagt) do not include zero. This provides additional statistical evidence that all coefficients are significantly different from zero.
+
+
+## Residuals plot:
+
+```{r}
+plot(residuals(model_final),
+     pch = 19,
+     col = "darkblue",
+     main = "Residual Plot: final Model",
+     xlab = "Observation Index",
+     ylab = "Residuals")
+
+abline(h = 0, col = "red", lwd = 2)
+
+
+
+```
+
+
+## The residual plot shows a clear pattern rather than a random cloud around zero. This indicates that the linearity and homoscedasticity assumptions of linear regression are not fully satisfied, because the errors display structure and do not have constant variance across observations. Although the mean residual is close to zero, the visible clustering suggests deviations from ideal normality and independence of errors. Therefore, while the model is still interpretable, the diagnostic plot shows that the classical linear regression assumptions are not fully satisfied.
+
+
+
+
+
+
+## Q-Q plot:
+
+
+```{r}
+qqnorm(residuals(model_final))
+qqline(residuals(model_final), col="red")
+
+```
+
+# The Q–Q plot indicates that the residuals do not follow a normal distribution, so the normality assumption of linear regression is violated.
+
+
+
+
+## A bad model??
+# Although the model identifies several statistically significant predictors, its overall predictive power is low, which is expected for biomedical data of this type. Alcohol consumption is highly variable, self-reported, and influenced by many unmeasured lifestyle and genetic factors that are not included in the dataset. Liver enzyme levels also respond nonlinearly and inconsistently between individuals. Therefore, the poor predictive performance does not reflect a failure of the model but rather the limited information contained in the available variables.
+
+## The dataset lacks important predictors, Alcohol consumption depends on many factors that are NOT present:
+# lifestyle, genetics, socioeconomic factors, diet, drinking habits, stress, environment
+
+
+
+
+## Improving the model(is it possible)??
+
+### Log Transformation :
+```{r}
+model_log <- lm(drinks ~ log(mcv) + log(sgot) + log(gammagt), data = df)
+summary(model_log)
+
+```
+
+## sqrt(mcv):
+```{r}
+model_trans <- lm(
+  drinks ~ sqrt(mcv) + log(sgot) + log(gammagt),
+  data = df
+)
+
+summary(model_trans)
+
+```
+
+
+
+## Conclusion About Log vs sqrt(mcv) Transformations
+#Both transformation approaches logging all predictors or logging the liver enzymes with a sqrt transformation for mcv — produce almost identical results. The adjusted R² improves only slightly (from ≈0.178 to ≈0.196), and the residual standard error decreases only marginally (≈3.027 to ≈2.99). These small changes indicate that transformations help stabilize variance and reduce skewness, but they do not fundamentally improve predictive performance. This suggests that the limitations come from the dataset itself: alcohol consumption is influenced by many unobserved factors, and the available biomedical variables explain only a modest portion of its variability. Therefore, while transformations refine the model, they do not substantially increase its predictive power.
+
+
+
+
+## 2) Bayesian analysis:
+
+
+```{r}
+# install.packages("rstanarm", dependencies = TRUE)
+library(rstanarm)
+model_bayes <- stan_glm( drinks ~ mcv + sgot + gammagt, data = df)
+
+summary(model_bayes, digits = 3)
+```
+
+
+
+## The posterior means for mcv (0.181), sgot (0.038), and gammagt (0.019) are all positive, and their 10%–90% credible intervals exclude zero, confirming that all predictors have statistically significant positive effects on alcohol consumption. The posterior estimate of the residual standard deviation (sigma ≈ 3.03) matches the frequentist estimate, showing agreement between the two approaches. The mean posterior predictive value (mean_PPD ≈ 3.45) indicates that the model typically predicts around 3.5 half-pints per day.
+
+
+## Bayesian Diagnostics:
+```{r}
+
+library(rstanarm)
+prior_summary(model_bayes)
+library(bayesplot)
+mcmc_dens(model_bayes)
+library(bayestestR)
+hdi(model_bayes)
+
+```
+
+
+
+
+
+
+# The Bayesian analysis, using the default weakly informative priors in stan_glm, produced posterior estimates that closely match the frequentist coefficients. The posterior distributions were unimodal and well-behaved, and all credible intervals excluded zero, confirming the significance of mcv, sgot, and gammagt. MCMC diagnostics (Rhat ≈ 1, high effective sample sizes, smooth posterior densities) indicated excellent convergence and a reliable posterior. Although the Bayesian model did not improve predictive performance relative to the frequentist model, it validated and strengthened the same conclusions by showing that the effects of the predictors remain credible under prior uncertainty.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
